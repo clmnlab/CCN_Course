@@ -268,8 +268,7 @@ class A2CAgent(nn.Module):
 
     def learn(self, env_class, num_episodes=200, episode_length=100, **env_kwargs):
         """주어진 환경으로 여러 에피소드 학습"""
-        # for _ in tqdm(range(num_episodes), desc="A2C Training"):
-        for _ in range(num_episodes):
+        for _ in tqdm(range(num_episodes), desc="A2C Training"):
             env = env_class(**env_kwargs)
             env.reset()
             loss = self.train_episode(env, episode_length=episode_length)
@@ -437,36 +436,3 @@ def plot_performance_over_time(all_data, p0_pairs):
     plt.show()
 
 
-
-# # --- 4. 메인 실행 및 결과 시각화 ---
-
-if __name__ == "__main__":
-    config = Config()
-
-    # 에이전트 생성
-    a2c_agent = A2CAgent(config.INPUT_SIZE, config.HIDDEN_SIZE, config.OUTPUT_SIZE,
-                         lr=config.LEARNING_RATE,
-                         gamma=config.GAMMA,
-                         value_loss_coef=config.VALUE_LOSS_COEF,
-                         entropy_coef=config.ENTROPY_COEF)
-
-    # 학습
-    a2c_agent.learn(DynamicBandit, num_episodes=config.NUM_EPISODES, episode_length=config.EPISODE_LENGTH)
-
-    # 모델 저장
-    a2c_agent.save("a2c_agent_10000epi.pth")
-
-    # 모델 로드 (예: 테스트용)
-    # a2c_agent.load("a2c_agent_checkpoint.pth")
-
-    # 결과 시각화
-    plt.figure(figsize=(12, 6))
-    a2c_smooth = moving_average(a2c_agent.total_rewards_history, config.MOVING_AVG_WINDOW)
-    plt.plot(a2c_smooth, label=f'Actor-Critic (A2C) (Smoothed)', color='red', alpha=0.8)
-    plt.plot(a2c_agent.total_rewards_history, color='red', alpha=0.2)
-    plt.title('Actor-Critic (A2C) 성능')
-    plt.xlabel('에피소드')
-    plt.ylabel(f'총 보상 (Smoothed over {config.MOVING_AVG_WINDOW} episodes)')
-    plt.legend()
-    plt.grid(True)
-    plt.show()
