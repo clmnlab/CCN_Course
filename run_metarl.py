@@ -61,7 +61,23 @@ import numpy as np
 import gym
 from gym.spaces import Discrete, Box
 
+class BanditEnv:
+    """확률적 투-암드 밴딧 환경"""
+    def __init__(self, correlated=False, probs=None):
+        if probs is not None:
+            self.reward_probs = np.array(probs)
+        elif correlated:
+            p1 = np.random.uniform(low=0.0, high=1.0)
+            self.reward_probs = np.array([p1, 1.0 - p1])
+        else:
+            self.reward_probs = np.random.uniform(low=0.0, high=1.0, size=2)
+        self.optimal_reward = np.max(self.reward_probs)
 
+    def step(self, action):
+        """행동을 받아 보상과 후회를 반환"""
+        reward = 1 if np.random.random() < self.reward_probs[action] else 0
+        regret = self.optimal_reward - self.reward_probs[action]
+        return reward, regret
 
 class DynamicBandit(gym.Env):
     """
@@ -242,124 +258,208 @@ def train_reinforce(config):
 # --- 3. Actor-Critic (A2C) 알고리즘 구현 ---
 
 class A2CAgent(nn.Module):
-    """Actor-Critic 에이전트. 정책(Actor)과 가치(Critic)를 모두 출력한다."""
-    def __init__(self, input_size, hidden_size, num_actions):
+    """Actor-Critic 에이전트. 학습, 저장, 로드 기능 포함."""
+    def __init__(self, input_size, hidden_size, num_actions, lr=0.002, gamma=0.98, value_loss_coef=0.5, entropy_coef=0.01):
         super(A2CAgent, self).__init__()
-        # Actor와 Critic이 RNN의 일부를 공유
+        self.input_size = input_size
         self.hidden_size = hidden_size
+        self.num_actions = num_actions
+        self.gamma = gamma
+        self.value_loss_coef = value_loss_coef
+        self.entropy_coef = entropy_coef
+
+        # LSTMCell
         self.lstm_cell = nn.LSTMCell(input_size, hidden_size)
-        
-        # Actor Head: 어떤 행동을 할지 결정 (정책)
         self.action_head = nn.Linear(hidden_size, num_actions)
-        # Critic Head: 현재 상태가 얼마나 좋은지 평가 (가치)
         self.value_head = nn.Linear(hidden_size, 1)
 
+        # Optimizer
+        self.optimizer = optim.Adam(self.parameters(), lr=lr)
+
+        # 학습 기록
+        self.total_rewards_history = []
+
     def forward(self, x, hidden_state):
-        """순전파: 정책과 가치를 모두 계산"""
+        """순전파: 정책과 가치 계산"""
         h, c = self.lstm_cell(x, hidden_state)
         logits = self.action_head(h)
         value = self.value_head(h)
-        new_hidden_state = (h, c)  # LSTM의 은닉 상태는 (h, c) 튜플로 반환
-        # logits는 정책을 나타내고, value는 상태의 가치를 나타냅니다.
-        # hidden_state는 다음 시간 스텝을 위해 업데이트된 은닉 상태입니다.
-        return logits, value, new_hidden_state
-    
+        return logits, value, (h, c)
 
-
-def train_a2c(config):
-    """Advantage Actor-Critic (A2C) 알고리즘으로 에이전트를 훈련"""
-    print("\nActor-Critic (A2C) 훈련을 시작합니다...")
-
-    agent = A2CAgent(config.INPUT_SIZE, config.HIDDEN_SIZE, config.OUTPUT_SIZE)
-    optimizer = optim.Adam(agent.parameters(), lr=config.LEARNING_RATE)
-
-    total_rewards_history = []
-
-    for i in tqdm(range(config.NUM_EPISODES), desc="A2C Training"):
-        env = DynamicBandit()
-        env.reset(training=True)  # 학습 모드로 초기화
+    def train_episode(self, env, episode_length=100):
+        """단일 에피소드 학습"""
         log_probs = []
         values = []
         rewards = []
-        entropies = [] # 탐험을 장려하기 위한 엔트로피
+        entropies = []
 
-        hidden_state = (torch.zeros(1, config.HIDDEN_SIZE), 
-                        torch.zeros(1, config.HIDDEN_SIZE))
-        action_input = torch.zeros(1, config.INPUT_SIZE)
-        
-        for _ in range(config.EPISODE_LENGTH):
-            logits, value, hidden_state = agent(action_input, hidden_state)
-            
+        hidden_state = (torch.zeros(1, self.hidden_size), torch.zeros(1, self.hidden_size))
+        action_input = torch.zeros(1, self.input_size)
+
+        for _ in range(episode_length):
+            logits, value, hidden_state = self.forward(action_input, hidden_state)
             policy = Categorical(logits=logits)
             action = policy.sample()
             
-            _, reward, _, _, _ = env.step(action.item())
-            
+            _, reward, terminated, truncated, _ = env.step(action.item())
+
             log_probs.append(policy.log_prob(action))
             values.append(value)
-            # rewards.append(reward)
             rewards.append(torch.tensor([reward], dtype=torch.float32))
             entropies.append(policy.entropy())
 
-            # action_input = nn.functional.one_hot(action, num_classes=config.INPUT_SIZE).float().unsqueeze(0)
-            action_input = nn.functional.one_hot(action, num_classes=config.INPUT_SIZE).float()
+            action_input = nn.functional.one_hot(action, num_classes=self.input_size).float()
 
-        # total_rewards_history.append(sum(rewards))
-        total_rewards_history.append(torch.cat(rewards).sum().item())
+            if terminated:
+                break
 
-        # --- A2C 손실 계산 (REINFORCE와의 핵심적인 차이) ---
-        
-        # 1. 할인된 미래 보상(Return) 계산
+        # 학습 기록 저장
+        episode_reward = torch.cat(rewards).sum().item()
+        self.total_rewards_history.append(episode_reward)
+
+        # --- 손실 계산 ---
         returns = []
         R = 0
         for r in reversed(rewards):
-            R = r + config.GAMMA * R
+            R = r + self.gamma * R
             returns.insert(0, R)
         returns = torch.tensor(returns)
-        
-        # 2. 어드밴티지(Advantage) 계산: A(s,a) = R - V(s)
-        # 어드밴티지: 예상보다 실제 보상이 얼마나 더 좋았는지를 나타내는 척도
+
         values = torch.cat(values).squeeze()
         advantages = returns - values
-        
-        # 3. 최종 손실 계산: Actor 손실 + Critic 손실 + 엔트로피 보너스
-        actor_loss = -(torch.stack(log_probs) * advantages.detach()).mean() # Critic으로 그래디언트 전파 방지
+
+        actor_loss = -(torch.stack(log_probs) * advantages.detach()).mean()
         critic_loss = nn.functional.mse_loss(returns, values)
         entropy_loss = -torch.stack(entropies).mean()
+        total_loss = actor_loss + self.value_loss_coef * critic_loss + self.entropy_coef * entropy_loss
 
-        total_loss = actor_loss + config.VALUE_LOSS_COEF * critic_loss + config.ENTROPY_COEF * entropy_loss
-        
-        optimizer.zero_grad()
+        self.optimizer.zero_grad()
         total_loss.backward()
-        optimizer.step()
+        self.optimizer.step()
 
-    return total_rewards_history
+        return episode_reward
 
-# --- 4. 메인 실행 및 결과 시각화 ---
+    def train(self, env_class, num_episodes=200, episode_length=100, **env_kwargs):
+        """주어진 환경으로 여러 에피소드 학습"""
+        for _ in tqdm(range(num_episodes), desc="A2C Training"):
+            env = env_class(**env_kwargs)
+            env.reset(training=True)
+            self.train_episode(env, episode_length=episode_length)
+
+    def save(self, path):
+        """모델과 학습 기록 저장"""
+        torch.save({
+            'model_state_dict': self.state_dict(),
+            'optimizer_state_dict': self.optimizer.state_dict(),
+            'total_rewards_history': self.total_rewards_history
+        }, path)
+
+    def load(self, path):
+        """모델과 학습 기록 로드"""
+        checkpoint = torch.load(path)
+        self.load_state_dict(checkpoint['model_state_dict'])
+        self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        self.total_rewards_history = checkpoint['total_rewards_history']
+
+
+
+# def train_a2c(config):
+#     """Advantage Actor-Critic (A2C) 알고리즘으로 에이전트를 훈련"""
+#     print("\nActor-Critic (A2C) 훈련을 시작합니다...")
+
+#     agent = A2CAgent(config.INPUT_SIZE, config.HIDDEN_SIZE, config.OUTPUT_SIZE)
+#     optimizer = optim.Adam(agent.parameters(), lr=config.LEARNING_RATE)
+
+#     total_rewards_history = []
+
+#     for i in tqdm(range(config.NUM_EPISODES), desc="A2C Training"):
+#         env = DynamicBandit()
+#         env.reset(training=True)  # 학습 모드로 초기화
+#         log_probs = []
+#         values = []
+#         rewards = []
+#         entropies = [] # 탐험을 장려하기 위한 엔트로피
+
+#         hidden_state = (torch.zeros(1, config.HIDDEN_SIZE), 
+#                         torch.zeros(1, config.HIDDEN_SIZE))
+#         action_input = torch.zeros(1, config.INPUT_SIZE)
+        
+#         for _ in range(config.EPISODE_LENGTH):
+#             logits, value, hidden_state = agent(action_input, hidden_state)
+            
+#             policy = Categorical(logits=logits)
+#             action = policy.sample()
+            
+#             _, reward, _, _, _ = env.step(action.item())
+            
+#             log_probs.append(policy.log_prob(action))
+#             values.append(value)
+#             # rewards.append(reward)
+#             rewards.append(torch.tensor([reward], dtype=torch.float32))
+#             entropies.append(policy.entropy())
+
+#             # action_input = nn.functional.one_hot(action, num_classes=config.INPUT_SIZE).float().unsqueeze(0)
+#             action_input = nn.functional.one_hot(action, num_classes=config.INPUT_SIZE).float()
+
+#         # total_rewards_history.append(sum(rewards))
+#         total_rewards_history.append(torch.cat(rewards).sum().item())
+
+#         # --- A2C 손실 계산 (REINFORCE와의 핵심적인 차이) ---
+        
+#         # 1. 할인된 미래 보상(Return) 계산
+#         returns = []
+#         R = 0
+#         for r in reversed(rewards):
+#             R = r + config.GAMMA * R
+#             returns.insert(0, R)
+#         returns = torch.tensor(returns)
+        
+#         # 2. 어드밴티지(Advantage) 계산: A(s,a) = R - V(s)
+#         # 어드밴티지: 예상보다 실제 보상이 얼마나 더 좋았는지를 나타내는 척도
+#         values = torch.cat(values).squeeze()
+#         advantages = returns - values
+        
+#         # 3. 최종 손실 계산: Actor 손실 + Critic 손실 + 엔트로피 보너스
+#         actor_loss = -(torch.stack(log_probs) * advantages.detach()).mean() # Critic으로 그래디언트 전파 방지
+#         critic_loss = nn.functional.mse_loss(returns, values)
+#         entropy_loss = -torch.stack(entropies).mean()
+
+#         total_loss = actor_loss + config.VALUE_LOSS_COEF * critic_loss + config.ENTROPY_COEF * entropy_loss
+        
+#         optimizer.zero_grad()
+#         total_loss.backward()
+#         optimizer.step()
+
+#     return total_rewards_history
+
+# # --- 4. 메인 실행 및 결과 시각화 ---
 
 if __name__ == "__main__":
     config = Config()
 
-    # 각 알고리즘 훈련 실행
-    # reinforce_rewards = train_reinforce(config)
-    a2c_rewards = train_a2c(config)
+    # 에이전트 생성
+    a2c_agent = A2CAgent(config.INPUT_SIZE, config.HIDDEN_SIZE, config.OUTPUT_SIZE,
+                         lr=config.LEARNING_RATE,
+                         gamma=config.GAMMA,
+                         value_loss_coef=config.VALUE_LOSS_COEF,
+                         entropy_coef=config.ENTROPY_COEF)
+
+    # 학습
+    a2c_agent.train(DynamicBandit, num_episodes=config.NUM_EPISODES, episode_length=config.EPISODE_LENGTH)
+
+    # 모델 저장
+    a2c_agent.save("a2c_agent_checkpoint.pth")
+
+    # 모델 로드 (예: 테스트용)
+    # a2c_agent.load("a2c_agent_checkpoint.pth")
 
     # 결과 시각화
     plt.figure(figsize=(12, 6))
-    
-    # 이동 평균을 적용하여 그래프를 부드럽게 표현
-    # reinforce_smooth = moving_average(reinforce_rewards, config.MOVING_AVG_WINDOW)
-    a2c_smooth = moving_average(a2c_rewards, config.MOVING_AVG_WINDOW)
-    
-    # plt.plot(reinforce_smooth, label=f'REINFORCE (Smoothed)', color='blue', alpha=0.8)
+    a2c_smooth = moving_average(a2c_agent.total_rewards_history, config.MOVING_AVG_WINDOW)
     plt.plot(a2c_smooth, label=f'Actor-Critic (A2C) (Smoothed)', color='red', alpha=0.8)
-
-    # 원본 데이터도 옅하게 표시
-    # plt.plot(reinforce_rewards, color='blue', alpha=0.2)
-    plt.plot(a2c_rewards, color='red', alpha=0.2)
-    
-    plt.title('REINFORCE vs. Actor-Critic (A2C) 성능 비교')
-    plt.xlabel('에피소드 (Episode)')
+    plt.plot(a2c_agent.total_rewards_history, color='red', alpha=0.2)
+    plt.title('Actor-Critic (A2C) 성능')
+    plt.xlabel('에피소드')
     plt.ylabel(f'총 보상 (Smoothed over {config.MOVING_AVG_WINDOW} episodes)')
     plt.legend()
     plt.grid(True)
