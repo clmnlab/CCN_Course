@@ -17,7 +17,7 @@ from tqdm import tqdm
 class Config:
     """훈련을 위한 하이퍼파라미터 설정"""
     # 훈련 관련
-    NUM_EPISODES = 200  # 훈련할 총 에피소드(밴딧 문제) 수
+    NUM_EPISODES = 1000  # 훈련할 총 에피소드(밴딧 문제) 수
     EPISODE_LENGTH = 100 # 하나의 에피소드(밴딧 문제) 내에서 행동할 횟수
     LEARNING_RATE = 0.002 # 옵티마이저의 학습률
 
