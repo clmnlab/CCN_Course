@@ -1,4 +1,5 @@
 import gymnasium as gym
+import ale_py
 import numpy as np
 import random
 import torch
@@ -10,7 +11,9 @@ import matplotlib.pyplot as plt
 from IPython.display import clear_output
 
 # ---------------- Hyperparameters ---------------- #
-ENV_NAME = "BreakoutNoFrameskip-v4"
+# ENV_NAME = "BreakoutNoFrameskip-v4"
+ENV_NAME = "ALE/Breakout-v5"
+
 NUM_EPISODES = 500
 GAMMA = 0.99
 LR = 1e-4
