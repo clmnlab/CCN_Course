@@ -35,17 +35,6 @@ class Agent:
         # Dimensions for visualization, specific to the CliffWalking environment.
         self.grid_height = 4
         self.grid_width = 12
-
-        # Font setting for proper display of text in visualization on different operating systems.
-        import platform
-        if 'Darwin' in platform.system():
-            plt.rcParams['font.family'] = 'AppleGothic'
-        elif 'Windows' in platform.system():
-            plt.rcParams['font.family'] = 'Malgun Gothic'
-        else:
-            plt.rcParams['font.family'] = 'DejaVu Sans'
-        plt.rcParams['axes.unicode_minus'] = False
-
     def select_action(self, state):
         """
         Selects an action using an epsilon-greedy policy.
@@ -272,7 +261,7 @@ def plot_rewards(q_rewards, sarsa_rewards):
 
 if __name__ == "__main__":
     # Main execution block
-    env = gym.make('CliffWalking-v0')
+    env = gym.make('CliffWalking-v1')
     
     # Initialize agents for each algorithm.
     q_agent = Agent(env, 'q_learning')

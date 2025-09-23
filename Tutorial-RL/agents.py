@@ -30,7 +30,7 @@ class Agent:
         # Initialize the Q-table with zeros. The shape should be (number of states, number of actions).
         # Note: The original code had the shape (num_actions, num_states), which is a common error.
         # This implementation assumes the standard (num_states, num_actions) format.
-        self.q_table = np.zeros((env.observation_space.n, env.action_space.n))
+        self.q_table = np.zeros((env.observation_space.shape[0], env.action_space.n))
         
     def select_action(self, state):
         """
