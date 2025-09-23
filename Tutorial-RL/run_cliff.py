@@ -1,3 +1,8 @@
+# This script implements and compares two different model-free reinforcement learning algorithms,
+# Q-Learning and SARSA, to solve the "CliffWalking-v0" environment from Gymnasium.
+# It includes functions for training, visualizing the learned policy (Q-table),
+# and plotting the performance of each algorithm over time.
+
 import gymnasium as gym
 import numpy as np
 import matplotlib.pyplot as plt
@@ -5,25 +10,33 @@ import matplotlib.colors as mcolors
 import time
 from IPython.display import clear_output
 
-# Hyperparameters
-ALPHA = 0.1
-GAMMA = 0.99
-EPSILON = 0.1
-NUM_EPISODES = 300
-FINAL_VIS_EPISODES = [50, 100, 300]
+# ---------------- Hyperparameters ---------------- #
+# These parameters control the learning process and the agent's behavior.
+ALPHA = 0.1  # Learning rate, controls how much the Q-table is updated with new information.
+GAMMA = 0.99 # Discount factor, determines the importance of future rewards.
+EPSILON = 0.1 # Epsilon-greedy exploration rate, probability of taking a random action.
+NUM_EPISODES = 300 # Total number of episodes to train the agents.
+FINAL_VIS_EPISODES = [50, 100, 300] # Episodes at which to visualize the policy and path.
 
 class Agent:
     def __init__(self, env, mode='q_learning'):
         """
-        Initialize the agent with Q-table and environment.
+        Initializes the agent with its environment, learning mode, and Q-table.
+
+        Args:
+            env (gym.Env): The environment the agent will interact with.
+            mode (str): The learning algorithm to use ('q_learning' or 'sarsa').
         """
         self.env = env
         self.mode = mode
+        # Initialize the Q-table with zeros. The shape is (number of states, number of actions).
         self.q_table = np.zeros((env.observation_space.n, env.action_space.n))
+        
+        # Dimensions for visualization, specific to the CliffWalking environment.
         self.grid_height = 4
         self.grid_width = 12
 
-        # Font setting for Korean/English visualization
+        # Font setting for proper display of text in visualization on different operating systems.
         import platform
         if 'Darwin' in platform.system():
             plt.rcParams['font.family'] = 'AppleGothic'
@@ -35,20 +48,43 @@ class Agent:
 
     def select_action(self, state):
         """
-        Epsilon-greedy action selection.
+        Selects an action using an epsilon-greedy policy.
+
+        Args:
+            state (int): The current state.
+
+        Returns:
+            int: The selected action.
         """
+        # With probability epsilon, choose a random action (exploration).
         if np.random.rand() < EPSILON:
             return self.env.action_space.sample()
+        # Otherwise, choose the action with the highest Q-value for the current state (exploitation).
         else:
             return np.argmax(self.q_table[state])
 
     def update(self, state, action, reward, next_state, next_action, done):
         """
-        Q-Learning or SARSA update rule.
+        Updates the Q-table based on the chosen learning algorithm (Q-Learning or SARSA).
+
+        Args:
+            state (int): The current state.
+            action (int): The action taken.
+            reward (float): The reward received.
+            next_state (int): The next state.
+            next_action (int): The next action selected (used only for SARSA).
+            done (bool): Whether the episode has ended.
         """
+        # Q-Learning update rule: Q(s,a) += α * [r + γ * max(Q(s',a')) - Q(s,a)]
+        # This is an off-policy algorithm, as it uses the max Q-value from the next state,
+        # regardless of what action was actually taken.
         if self.mode == 'q_learning':
             best_next_q = np.max(self.q_table[next_state])
             td_target = reward + GAMMA * best_next_q * (1 - done)
+        
+        # SARSA update rule: Q(s,a) += α * [r + γ * Q(s',a') - Q(s,a)]
+        # This is an on-policy algorithm, as it uses the Q-value of the next action
+        # that was selected by the current policy.
         elif self.mode == 'sarsa':
             next_q = self.q_table[next_state, next_action]
             td_target = reward + GAMMA * next_q * (1 - done)
@@ -58,22 +94,22 @@ class Agent:
 
     def visualize_q_table(self, episode=None):
         """
-        Visualize Q-table as a heatmap with arrows.
-        Cliff, Goal, Start included.
-        Use min Q-value for color mapping to highlight extreme negative rewards (Cliff).
+        Visualizes the Q-table as a heatmap with arrows indicating the optimal action.
+        Special cells (Start, Goal, Cliff) are highlighted.
         """
         fig, ax = plt.subplots(figsize=(self.grid_width, self.grid_height))
 
-        # Colormap normalization
+        # Colormap normalization for visual clarity.
         q_min = np.min(self.q_table)
         q_max = np.max(self.q_table)
         if q_max == q_min:
+            # Handle case where all Q-values are the same (e.g., at initialization).
             norm = mcolors.Normalize(vmin=-100, vmax=0)
         else:
             norm = mcolors.Normalize(vmin=q_min, vmax=q_max)
-        cmap = plt.cm.RdYlGn  # Red (low) -> Yellow -> Green (high)
+        cmap = plt.cm.RdYlGn  # Red (low Q) -> Yellow (mid) -> Green (high Q)
 
-        # Draw grid
+        # Draw grid lines.
         ax.set_xticks(np.arange(self.grid_width + 1) - 0.5, minor=True)
         ax.set_yticks(np.arange(self.grid_height + 1) - 0.5, minor=True)
         ax.grid(which='minor', color='black', linestyle='-', linewidth=2)
@@ -84,16 +120,16 @@ class Agent:
             for c in range(self.grid_width):
                 state_idx = r * self.grid_width + c
 
-                # Determine Q-value for color mapping
-                # Use min Q-value to emphasize extreme negative rewards for Cliff
+                # Use the minimum Q-value for coloring to visually emphasize the negative
+                # rewards of falling off the cliff.
                 q_val_for_color = np.min(self.q_table[state_idx])
                 rect_color = cmap(norm(q_val_for_color))
 
-                # Draw rectangle
+                # Draw the background rectangle for the cell.
                 ax.add_patch(plt.Rectangle((c - 0.5, r - 0.5), 1, 1,
                                         facecolor=rect_color, edgecolor='black', linewidth=0.5))
 
-                # Overlay text for special cells
+                # Overlay text for special cells.
                 cell_text = ''
                 if state_idx == self.grid_height * self.grid_width - self.grid_width:
                     cell_text = 'S'  # Start
@@ -104,8 +140,8 @@ class Agent:
                 if cell_text:
                     ax.text(c, r, cell_text, ha='center', va='center', fontsize=12, weight='bold')
 
-                # Draw arrow for the action with the highest Q-value (except Goal)
-                if state_idx != self.grid_height * self.grid_width - 1:
+                # Draw an arrow representing the best action to take from this state.
+                if state_idx != self.grid_height * self.grid_width - 1: # No arrow at the goal.
                     max_action = np.argmax(self.q_table[state_idx])
                     dx, dy = 0, 0
                     if max_action == 0: dy = 0.3  # Up
@@ -124,11 +160,11 @@ class Agent:
 
     def visualize_path(self, path, episode=None):
         """
-        Visualize agent path on the grid.
+        Visualizes the agent's path on the grid for a single episode.
         """
         fig, ax = plt.subplots(figsize=(self.grid_width, self.grid_height))
 
-        # Draw grid with start/goal/cliff
+        # Draw grid with special cells.
         ax.set_xticks(np.arange(self.grid_width + 1) - 0.5, minor=True)
         ax.set_yticks(np.arange(self.grid_height + 1) - 0.5, minor=True)
         ax.grid(which='minor', color='black', linestyle='-', linewidth=2)
@@ -153,7 +189,7 @@ class Agent:
                 if cell_text:
                     ax.text(c, r, cell_text, ha='center', va='center', fontsize=12, weight='bold')
 
-        # Draw path
+        # Draw the agent's path with numbered markers for each step.
         for i in range(len(path) - 1):
             r1, c1 = divmod(path[i], self.grid_width)
             r2, c2 = divmod(path[i + 1], self.grid_width)
@@ -170,7 +206,14 @@ class Agent:
 
 def train(agent, env):
     """
-    Train the agent on the environment.
+    Trains the provided agent on the environment for a fixed number of episodes.
+
+    Args:
+        agent (Agent): The agent instance to train.
+        env (gym.Env): The environment.
+
+    Returns:
+        list: A list of total rewards for each episode.
     """
     rewards = []
     print(f"--- {agent.mode.upper()} Training Start ---")
@@ -184,8 +227,10 @@ def train(agent, env):
         while not done:
             next_state, reward, terminated, truncated, _ = env.step(action)
             done = terminated or truncated
-            next_action = agent.select_action(next_state)
+            next_action = agent.select_action(next_state) # This action is needed for SARSA update
             agent.update(state, action, reward, next_state, next_action, done)
+            
+            # Update state and action for the next loop iteration.
             state = next_state
             action = next_action
             total_reward += reward
@@ -193,6 +238,7 @@ def train(agent, env):
 
         rewards.append(total_reward)
 
+        # Periodically visualize the agent's policy and path.
         if (episode + 1) in FINAL_VIS_EPISODES:
             clear_output(wait=True)
             print(f"--- {agent.mode.upper()} Episode {episode + 1} Visualization ---")
@@ -204,7 +250,11 @@ def train(agent, env):
 
 def plot_rewards(q_rewards, sarsa_rewards):
     """
-    Plot total rewards for Q-Learning and SARSA.
+    Plots the total rewards per episode for both Q-Learning and SARSA.
+
+    Args:
+        q_rewards (list): List of rewards from Q-Learning training.
+        sarsa_rewards (list): List of rewards from SARSA training.
     """
     plt.figure(figsize=(12, 6))
     plt.plot(q_rewards, label='Q-Learning')
@@ -212,6 +262,7 @@ def plot_rewards(q_rewards, sarsa_rewards):
     plt.xlabel('Episodes')
     plt.ylabel('Total Reward')
     plt.title('Q-Learning vs SARSA on CliffWalking')
+    # The optimal path has a reward of -13 (-1 per step for 12 steps, 0 for goal).
     plt.axhline(y=-13, color='gray', linestyle='--', label='Optimal Path Reward')
     plt.legend()
     plt.grid(True, linestyle='--', alpha=0.7)
@@ -220,12 +271,17 @@ def plot_rewards(q_rewards, sarsa_rewards):
 
 
 if __name__ == "__main__":
+    # Main execution block
     env = gym.make('CliffWalking-v0')
+    
+    # Initialize agents for each algorithm.
     q_agent = Agent(env, 'q_learning')
     sarsa_agent = Agent(env, 'sarsa')
 
+    # Train each agent and store the rewards.
     q_rewards = train(q_agent, env)
     sarsa_rewards = train(sarsa_agent, env)
 
+    # Close the environment and plot the results.
     env.close()
     plot_rewards(q_rewards, sarsa_rewards)
