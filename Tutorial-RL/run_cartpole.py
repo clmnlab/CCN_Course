@@ -114,7 +114,7 @@ class TabularPolicyAgent:
         self.actions.append(action)
         return action
 
-    def finish_episode(self):
+    def update(self):
         """
         Updates the policy table at the end of an episode using the policy gradient algorithm.
         Rewards are used to calculate the discounted return (G), which serves as a score.
@@ -182,7 +182,7 @@ class PolicyGradientAgent:
         self.saved_log_probs.append(m.log_prob(action))
         return action.item()
 
-    def finish_episode(self):
+    def update(self):
         """
         Calculates the loss and updates the network weights at the end of an episode.
         The loss is a sum of the negative log probabilities weighted by the discounted returns.
@@ -273,7 +273,7 @@ class DQNAgent:
             q_values = self.q_net(state)
         return q_values.argmax().item()  # Exploit
 
-    def train_step(self):
+    def update(self):
         """
         Performs one training step by sampling a batch from the replay buffer.
         The loss is calculated using the Q-learning update rule and the
@@ -364,7 +364,7 @@ def train(agent_type="qtable", render=False):
                 state = next_state
             elif agent_type == "dqn":
                 agent.memory.push(state, action, reward, next_state, done)
-                agent.train_step()
+                agent.update()
                 state = next_state
 
         # Update the target network for DQN every N episodes.
@@ -373,7 +373,7 @@ def train(agent_type="qtable", render=False):
         
         # Perform end-of-episode updates for policy gradient agents.
         if agent_type in ["policy_table", "policy_dnn"]:
-            agent.finish_episode()
+            agent.update()
 
         total_rewards.append(total_reward)
 
