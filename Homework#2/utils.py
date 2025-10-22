@@ -1,5 +1,6 @@
 import numpy as np
 import torch as th
+import motornet as mn
 
 ## Utility functions for simulating rollouts and collecting data
 def run_rollout(env,agent,batch_size=1, catch_trial_perc=50,condition='train', 
@@ -81,3 +82,30 @@ def run_rollout(env,agent,batch_size=1, catch_trial_perc=50,condition='train',
             data[key] = th.detach(data[key])
 
     return data
+
+
+plotor = mn.plotor.plot_pos_over_time
+
+def plot_simulations2(data):
+    xy = data['xy'].detach().cpu().numpy()
+    tg = data['tg'].detach().cpu().numpy()
+    target_x = tg[:, -1, 0]
+    target_y = tg[:, -1, 1]
+
+    plt.figure(figsize=(10,3))
+
+    # plt.subplot(1,2,1)
+    # plt.ylim([-.4, 0.6])
+    # plt.xlim([-0.6, 0.6])
+    plotor(axis=plt.gca(), cart_results=xy)
+    plt.scatter(target_x, target_y)
+
+    # plt.subplot(1,2,2)
+    # # plt.ylim([-2, 2])
+    # # plt.xlim([-2, 2])
+    # plotor(axis=plt.gca(), cart_results=xy - target_xy)
+    # plt.axhline(0, c="grey")
+    # plt.axvline(0, c="grey")
+    # plt.xlabel("X distance to target")
+    # plt.ylabel("Y distance to target")
+    plt.show()
