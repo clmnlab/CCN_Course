@@ -48,8 +48,10 @@ class SLAgent:
         # print("done.")
 
     def load(self, load_dir):
-        self.network.load_state_dict(th.load(f"{load_dir}"))
-    
+        device = th.device('cuda' if th.cuda.is_available() else 'cpu')
+        self.network.load_state_dict(th.load(f"{load_dir}", map_location=device))
+
+        
     def calc_loss(self, data, loss_weight):
         loss = {
             'position': None,
@@ -91,4 +93,4 @@ class SLAgent:
 
         return overall_loss, loss_weighted
 
- 
+
