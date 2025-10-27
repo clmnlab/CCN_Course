@@ -126,8 +126,13 @@ class CentreOutFF(mn.environment.Environment):
     self.go_cue_time[self.catch_trial==1] = self.max_ep_duration
     self.go_cue = th.zeros((batch_size,1)).to(self.device)
     self.init = self.states['fingertip']
-    self.task_cue = th.zeros((batch_size,1)).to(self.device) # added for multi-task adaptation
-
+    if self.ff_coefficient == 0:
+      self.task_cue = th.zeros((batch_size,1)).to(self.device) # added for multi-task adaptation
+    elif self.ff_coefficient > 0:
+      self.task_cue = th.ones((batch_size,1)).to(self.device) # added for multi-task adaptation
+    else:
+      self.task_cue = -1*th.ones((batch_size,1)).to(self.device) # added for multi-task adaptation
+      
     obs = self.get_obs(deterministic=deterministic).to(self.device)
 
     
