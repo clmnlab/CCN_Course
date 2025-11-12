@@ -77,7 +77,7 @@ def other_alternative(a):
 class QLearner:
     """간단한 Q-learning 에이전트. Adversary의 공격 대상."""
     def __init__(self, alpha, gamma, epsilon):
-        self.q_table = np.zeros(2, dtype=np.float32)
+        self.q_table = 0.25*np.ones(2, dtype=np.float32)
         self.alpha = alpha
         self.gamma = gamma
         self.epsilon = epsilon
@@ -105,175 +105,6 @@ class QLearner:
         self.q_table = np.zeros(2, dtype=np.float32)
         self.last_action = None
 
-
-
-class CatieAgent:
-    def __init__(self, K=2, tau=0.2, phi=0.1, epsilon=0.1, seed=None):
-
-        if seed is not None:
-            random.seed(seed)
-            np.random.seed(seed)
-        self.tau = float(tau)
-        self.phi = float(phi)
-        self.epsilon = float(epsilon)
-        self.K = int(K)
-        # choose a k in [0, K] to represent the current contingency depth used internally
-        self.k = random.randint(0, max(0, self.K))
-        self.trial_number = 0
-        self.choices = []
-        self.surprises = []
-        self.outcomes = []
-        self.outcomes_biased = []
-        self.outcomes_anti_biased = []
-
-    def get_p_explore(self):
-        if len(self.surprises) == 0:
-            p_explore = self.epsilon * 1/3.0
-        else:
-            p_explore = self.epsilon * (1.0 + self.surprises[-1] + np.mean(self.surprises)) / 3.0
-        return max(0.0, min(1.0, p_explore))
-
-    def get_trend(self):
-        if (len(self.choices) < 2 or self.choices[-1] != self.choices[-2]):
-            return "INVALID"
-        elif self.outcomes[-1] > self.outcomes[-2]:
-            return "POSITIVE"
-        else:
-            return "NON_POSITIVE"
-
-    def __contingent_average_specific_contingency(self, k, alternative, contingency):
-        ca_outcomes = []
-        if k == 0:
-            return []
-        for i in range(len(self.outcomes) - k):
-            if (self.outcomes[i:i + k] == contingency) and (self.choices[i + k] == alternative):
-                ca_outcomes.append(self.outcomes[i + k])
-        return ca_outcomes
-
-    def __contingent_average(self, k, alternative):
-        if k <= 0:
-            ca_outcomes = self.outcomes_biased if alternative == TARGET_ACTION else self.outcomes_anti_biased
-        else:
-            if k > len(self.outcomes):
-                ca_outcomes = []
-            else:
-                current_contingency = self.outcomes[-k:]
-                ca_outcomes = self.__contingent_average_specific_contingency(k, alternative, current_contingency)
-            if not ca_outcomes:
-                alternative_choice_indices = [i for i in range((k-1), len(self.choices)) if self.choices[i] == alternative]
-                all_k_contingencies = [self.outcomes[i:i+k] for i in alternative_choice_indices if i+k <= len(self.outcomes)]
-                if alternative_choice_indices and all_k_contingencies:
-                    ca_outcomes = self.__contingent_average_specific_contingency(k, alternative, random.choice(all_k_contingencies))
-                else:
-                    ca_outcomes = self.__contingent_average(k - 1, alternative)
-        if not ca_outcomes:
-            return None
-        else:
-            return np.mean(ca_outcomes)
-
-    def get_contingent_average(self):
-        return (self.__contingent_average(self.k, TARGET_ACTION),
-                self.__contingent_average(self.k, ALT_ACTION))
-
-    def update(self, choice, outcome):
-        self.choices.append(choice)
-        if choice == TARGET_ACTION:
-            obs_list = self.outcomes_biased
-        else:
-            obs_list = self.outcomes_anti_biased
-        obs_sd = 0 if len(obs_list) < 2 else np.std(obs_list)
-        if choice == TARGET_ACTION:
-            self.outcomes_biased.append(outcome)
-        else:
-            self.outcomes_anti_biased.append(outcome)
-        self.outcomes.append(outcome)
-        if obs_sd > 0:
-            exp_t_i = self.__contingent_average(self.k, choice)
-            if exp_t_i is None:
-                surprise_t = 0.0
-            else:
-                expected_actual_reward_diff = abs(exp_t_i - outcome)
-                surprise_t = expected_actual_reward_diff / (obs_sd + expected_actual_reward_diff)
-        else:
-            surprise_t = 0.0
-        self.surprises.append(surprise_t)
-        self.trial_number += 1
-
-    def select_action(self):
-        if self.trial_number == 0:
-            return random.choice([0, 1])
-        elif self.trial_number == 1:
-            if self.choices[0] == TARGET_ACTION:
-                return ALT_ACTION
-            else:
-                return TARGET_ACTION
-
-        if ((self.choices[-1] == self.choices[-2]) and
-            (self.outcomes[-1] != self.outcomes[-2]) and
-            (random.random() < self.tau)):
-            if self.outcomes[-1] > self.outcomes[-2]:
-                return self.choices[-1]
-            else:
-                return other_alternative(self.choices[-1])
-
-        if random.random() < self.get_p_explore():
-            return random.choice([0, 1])
-
-        if random.random() < self.phi and len(self.choices) > 0:
-            return random.choice([0, 1])
-
-        ca_biased = self.__contingent_average(self.k, TARGET_ACTION)
-        ca_anti_biased = self.__contingent_average(self.k, ALT_ACTION)
-        if (ca_biased is None) or (ca_anti_biased is None) or (ca_biased == ca_anti_biased):
-            return choose_randomly()
-        elif ca_biased > ca_anti_biased:
-            return TARGET_ACTION
-        else:
-            return ALT_ACTION
-
-    def prob_choose(self, a):
-        if self.trial_number == 0:
-            return 0.5 if a in (TARGET_ACTION, ALT_ACTION) else 0.0
-        if self.trial_number == 1:
-            chosen = ALT_ACTION if self.choices[0] == TARGET_ACTION else TARGET_ACTION
-            return 1.0 if a == chosen else 0.0
-
-        trend_cond = ((self.choices[-1] == self.choices[-2]) and (self.outcomes[-1] != self.outcomes[-2]))
-        p_trend = self.tau if trend_cond else 0.0
-
-        if trend_cond:
-            if self.outcomes[-1] > self.outcomes[-2]:
-                trend_choice = self.choices[-1]
-            else:
-                trend_choice = other_alternative(self.choices[-1])
-        else:
-            trend_choice = None
-
-        p_explore = self.get_p_explore()
-        p_inertia = self.phi if len(self.choices) > 0 else 0.0
-
-        ca_biased = self.__contingent_average(self.k, TARGET_ACTION)
-        ca_anti_biased = self.__contingent_average(self.k, ALT_ACTION)
-        if (ca_biased is None) or (ca_anti_biased is None) or (ca_biased == ca_anti_biased):
-            p_contingent_choose_biased = 0.5
-        elif ca_biased > ca_anti_biased:
-            p_contingent_choose_biased = 1.0
-        else:
-            p_contingent_choose_biased = 0.0
-
-        p = 0.0
-        if p_trend > 0.0:
-            p += p_trend * (1.0 if a == trend_choice else 0.0)
-        remainder = (1.0 - p_trend)
-        p += remainder * (p_explore * 0.5 if a in (TARGET_ACTION, ALT_ACTION) else 0.0)
-        rem2 = remainder * (1.0 - p_explore)
-        last_choice = self.choices[-1] if len(self.choices) > 0 else None
-        inertia_prob = rem2 * p_inertia * (1.0 if a == last_choice else 0.0)
-        contingent_prob = rem2 * (1.0 - p_inertia) * (p_contingent_choose_biased if a == TARGET_ACTION else (1.0 - p_contingent_choose_biased))
-        p += inertia_prob + contingent_prob
-        return max(0.0, min(1.0, p))
-
-
 class BehavioralLearner(nn.Module):
     """데이터로부터 행동 패턴을 학습하는 GRU 기반 에이전트."""
     def __init__(self, input_size, hidden_size, output_size, n_epochs=100, lr=1e-3):
@@ -290,7 +121,8 @@ class BehavioralLearner(nn.Module):
     def forward(self, x, h):
         out, h = self.gru(x, h)
         out = self.fc(out) # out shape: (batch, seq_len, output_size)
-        return F.softmax(out, dim=2), h
+        return out, h
+        # return F.softmax(out, dim=2), h
 
     def init_hidden(self, batch_size=1):
         return torch.zeros(1, batch_size, self.hidden_size, device=device)
@@ -302,11 +134,12 @@ class BehavioralLearner(nn.Module):
         
         with torch.no_grad():
             input_tensor = torch.tensor([[prev_action, prev_reward]], dtype=torch.float32, device=device).unsqueeze(1)
-            action_probs, self.hidden = self.forward(input_tensor, self.hidden)
+            logits, self.hidden = self.forward(input_tensor, self.hidden)
         
         # .squeeze(0)으로 (1, 1, 2) -> (1, 2)
         # .multinomial(1) -> (1, 1) -> .item()
-        action = torch.multinomial(action_probs.squeeze(0), 1).item()
+        probs = F.softmax(logits.squeeze(0), dim=1)  # (1, output_size)
+        action = torch.multinomial(probs, 1).item()
         self.last_action = action
         return action
 
@@ -333,7 +166,7 @@ class BehavioralLearner(nn.Module):
         """원시 데이터 리스트를 (입력 텐서, 타겟 텐서)로 변환합니다."""
         all_inputs = []
         all_targets = []
-        expected_seq_len = 99  # 100 스텝 -> 99개의 (입력, 타겟) 쌍
+        expected_seq_len = len(data[0])-1  # 100 스텝 -> 99개의 (입력, 타겟) 쌍
 
         for episode in data:
             if len(episode) != 100: 
@@ -483,16 +316,30 @@ class AdversaryDQN(nn.Module):
     # def forward(self, x):
     #     return F.relu(self.layer3(F.relu(self.layer2(F.relu(self.layer1(x))))))
 
+
 class AdversaryAgent:
-    def __init__(self):
+    def __init__(self, learner):
+        self.learner = learner # target learner to attack
         self.policy_net = AdversaryDQN(ADV_STATE_SIZE, ADV_ACTION_SIZE).to(device)
         self.target_net = AdversaryDQN(ADV_STATE_SIZE, ADV_ACTION_SIZE).to(device)
         self.target_net.load_state_dict(self.policy_net.state_dict())
         self.target_net.eval()
         self.optimizer = optim.Adam(self.policy_net.parameters(), lr=ADV_LR)
         self.memory = ReplayBuffer(ADV_MEMORY_CAPACITY)
+        self.rewards_left = [REWARD_BUDGET_PER_ARM, REWARD_BUDGET_PER_ARM]
+        self.reward_assignment = [0, 0]
         self.steps_done = 0
 
+    def reset(self):
+        learner_state = self.learner.get_observable_state()
+        norm_t = 0
+        norm_rewards_left = [1, 1]
+        state = torch.tensor(
+            np.concatenate([learner_state, [norm_t], norm_rewards_left]),
+            dtype=torch.float32, device=device
+        ).unsqueeze(0)
+        return state
+    
     def select_action(self, state, is_training=True):
         if is_training:
             sample = random.random()
@@ -500,12 +347,49 @@ class AdversaryAgent:
             self.steps_done += 1
             if sample > eps_threshold:
                 with torch.no_grad():
-                    return self.policy_net(state).max(1)[1].view(1, 1)
+                    adv_action_tensor = self.policy_net(state).max(1)[1].view(1, 1)
             else:
-                return torch.tensor([[random.randrange(ADV_ACTION_SIZE)]], device=device, dtype=torch.long)
+                adv_action_tensor= torch.tensor([[random.randrange(ADV_ACTION_SIZE)]], device=device, dtype=torch.long)
         else:
             with torch.no_grad():
-                return self.policy_net(state).max(1)[1].view(1, 1)
+                adv_action_tensor = self.policy_net(state).max(1)[1].view(1, 1)
+            
+        adv_action_raw = adv_action_tensor.item() # 0, 1, 2, 3 중 하나                
+        # --- [핵심 수정] 4가지 행동을 '의도'로 번역 ---
+        # adv_action_raw의 의미: # 0: (R:0, L:0) # 1: (R:1, L:0) # 2: (R:0, L:1) # 3: (R:1, L:1)
+        # (참고: TARGET_ACTION = 0 (Left), ALT_ACTION = 1 (Right))
+        reward_intent = [0, 0]
+        if adv_action_raw == 1:
+            reward_intent[TARGET_ACTION] = 1
+        elif adv_action_raw == 2:
+            reward_intent[ALT_ACTION] = 1
+        elif adv_action_raw == 3:
+            reward_intent[TARGET_ACTION] = 1
+            reward_intent[ALT_ACTION] = 1
+        # if rewards_left[adv_action] <= 0: adv_action = 1 - adv_action
+        
+        # --- 예산 제약(Budget)을 '현실'로 적용, 예산이 없으면 보상을 0으로 강제합니다.        
+        # 0번 팔(Left)에 보상을 주려 했고 & 예산이 있는가?
+        if reward_intent[TARGET_ACTION] == 1 and self.rewards_left[TARGET_ACTION] > 0:
+            self.reward_assignment[TARGET_ACTION] = 1
+            self.rewards_left[TARGET_ACTION] -= 1
+        
+        # 1번 팔(Right)에 보상을 주려 했고 & 예산이 있는가?
+        if reward_intent[ALT_ACTION] == 1 and self.rewards_left[ALT_ACTION] > 0:
+            self.reward_assignment[ALT_ACTION] = 1
+            self.rewards_left[ALT_ACTION] -= 1
+
+        adv_action = 0  # 기본값: [0, 0] (보상 없음)
+        if self.reward_assignment[TARGET_ACTION] == 1 and self.reward_assignment[ALT_ACTION] == 0:
+            adv_action = 1  # [1, 0]
+        elif self.reward_assignment[TARGET_ACTION] == 0 and self.reward_assignment[ALT_ACTION] == 1:
+            adv_action = 2  # [0, 1]
+        elif self.reward_assignment[TARGET_ACTION] == 1 and self.reward_assignment[ALT_ACTION] == 1:
+            adv_action = 3  # [1, 1]
+
+        return adv_action    
+    # def step(self, action):
+
 
     def optimize_model(self):
         if len(self.memory) < ADV_BATCH_SIZE: return
@@ -535,6 +419,91 @@ class AdversaryAgent:
             target_net_state_dict[key] = policy_net_state_dict[key]*ADV_TAU + target_net_state_dict[key]*(1-ADV_TAU)
         self.target_net.load_state_dict(target_net_state_dict)
 
+
+class KBandit:
+    def __init__(self, n_arms, reward_type='binary', stationary=True):
+        self.n_arms = n_arms
+        self.reward_type = reward_type
+        self.stationary = stationary
+    def reset(self):    
+        if self.reward_type == "continuous":
+            self.action_values = np.random.normal(size=self.n_arms)
+            self.reward_func = self._continuous_reward
+        elif self.reward_type == "binary":
+            self.action_values = np.random.rand(self.n_arms)
+            self.reward_func = self._binary_reward
+        else:
+            raise ValueError("Reward type not recognized")
+    
+    def _binary_reward(self, action):
+        # Return a binary reward with probability equal to the reward_probs for that action
+        return np.random.choice([0, 1], p=[1-self.action_values[action], self.action_values[action]])
+    
+    def step(self, action):
+        # Take an action and return the corresponding reward
+        reward = self.reward_func(action)
+        self.optimal = np.argmax(self.action_values)
+        if not self.stationary:
+            # Update action values and reward probabilities using random walks
+            self.action_values += np.random.normal(0, 0.01, self.n_arms)
+            if self.reward_type=='binary':
+                self.action_values = np.clip(self.action_values, 0, 1)
+        return reward
+class RandEnv:
+    def __init__(self, n_arms):
+        self.n_arms = n_arms
+    def reset(self):    
+        pass
+    def step(self, action):
+        reward = np.random.choice([0, 1], p=[0.5, 0.5])
+        return reward
+        
+def generate_behavioral_data(agent, env, num_episodes=10000, episode_length=100, seed=None):
+    """
+    실제 에이전트(Q-learning 또는 CatieAgent)를 사용하여 행동 데이터를 생성.
+    
+    Args:
+        agent_class: QLearner 또는 CatieAgent 클래스
+        num_episodes (int): 에피소드 수
+        episode_length (int): 각 에피소드 길이
+        seed (int or None): 재현 가능성을 위한 랜덤 시드
+
+    Returns:
+        data (list): [[(action, reward), ...], ...] 형태의 BehavioralLearner 학습용 데이터
+    """
+    if seed is not None:
+        random.seed(seed)
+        np.random.seed(seed)
+
+    data = []
+
+    for _ in range(num_episodes):
+        # 에이전트 초기화
+        episode = []
+        # rewards_left = [REWARD_BUDGET_PER_ARM, REWARD_BUDGET_PER_ARM]
+        env.reset()
+        for _ in range(episode_length):
+            # 행동 선택
+            action = agent.select_action()
+            reward = env.step(action)
+            # # 단순한 보상 규칙: TARGET_ACTION에 가까운 행동에 보상 집중
+            # # reward = 1 if random.random() < 0.5 else 0
+            # if rewards_left[action] > 0 and random.random() < 0.5:
+            #     reward = 1
+            #     rewards_left[action] -= 1
+            # else:
+            #     reward = 0
+
+            # 보상 반영
+            agent.update(reward)
+            episode.append((action, reward))
+
+        data.append(episode)
+
+    # print(f"✅ {agent_class.__name__} 기반 Behavioral 데이터 {num_episodes}개 생성 완료.")
+    return data
+
+
 # --- 3. 실험 전체를 관리하는 클래스 ---
-class Experiment:
+# class Experiment:
    
